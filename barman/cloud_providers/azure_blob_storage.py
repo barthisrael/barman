@@ -23,6 +23,8 @@ import os
 import shutil
 from io import BytesIO, RawIOBase
 
+import snappy
+
 from barman.cloud import CloudInterface, CloudProviderError
 
 try:
@@ -281,6 +283,9 @@ class AzureCloudInterface(CloudInterface):
                 source_file = gzip.GzipFile(fileobj=blob, mode="rb")
             elif decompress == "bzip2":
                 source_file = bz2.BZ2File(blob, "rb")
+            elif decompress == "snappy":
+                snappy.stream_decompress(blob, dest_file)
+                return
             with source_file:
                 shutil.copyfileobj(source_file, dest_file)
 

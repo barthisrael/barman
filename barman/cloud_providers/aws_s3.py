@@ -23,6 +23,8 @@ import shutil
 from io import RawIOBase
 
 from barman.cloud import CloudInterface, CloudProviderError
+import snappy
+
 
 try:
     # Python 3.x
@@ -246,6 +248,9 @@ class S3CloudInterface(CloudInterface):
                 source_file = gzip.GzipFile(fileobj=remote_file, mode="rb")
             elif decompress == "bzip2":
                 source_file = bz2.BZ2File(remote_file, "rb")
+            elif decompress == "snappy":
+                snappy.stream_decompress(remote_file, dest_file)
+                return
             else:
                 raise ValueError("Unknown compression type: %s" % decompress)
 
