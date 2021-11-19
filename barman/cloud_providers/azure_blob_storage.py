@@ -92,6 +92,51 @@ class StreamingBlobIO(RawIOBase):
         return blob_bytes
 
 
+class DecompressingBlobIO(StreamingBlobIO):
+    def __init__(self, blob, decompressor):
+        super(DecompressingBlobIO, self).__init__(blob)
+        self.decompressor = decompressor
+        self.buffer = bytearray()
+        self.compressed_chunk_size = 1024
+
+    def _read_from_uncompressed_buffer(self, n):
+        if n <= len(self.buffer):
+            return_bytes = self.buffer[:n]
+            self.buffer = self.buffer[n:]
+            return return_bytes
+        else:
+            return_bytes = self.buffer
+            self.buffer = []
+            return return_bytes
+
+    def _read_compressed_chunk(self, n):
+        compressed_bytes = self._current_chunk.read(n)
+        try:
+            while len(compressed_bytes) < n:
+                self._current_chunk = BytesIO(self._chunks.next())
+                compressed_bytes = self._current_chunk.read(n)
+        except StopIteration:
+            pass
+        return compressed_bytes
+
+    def read(self, n=1):
+        n = None if n < 0 else n
+        uncompressed_bytes = self._read_from_uncompressed_buffer(n)
+        if len(uncompressed_bytes) == n:
+            return uncompressed_bytes
+
+        while len(uncompressed_bytes) < n:
+            compressed_bytes = self._read_compressed_chunk(self.compressed_chunk_size)
+            uncompressed_bytes += self.decompressor.decompress(compressed_bytes)
+            if len(compressed_bytes) < self.compressed_chunk_size:
+                # If we got fewer bytes than we asked for then we're done
+                break
+
+        return_bytes = uncompressed_bytes[:n]
+        self.buffer = uncompressed_bytes[n:]
+        return return_bytes
+
+
 class AzureCloudInterface(CloudInterface):
     # Azure block blob limitations
     # https://docs.microsoft.com/en-us/rest/api/storageservices/understanding-block-blobs--append-blobs--and-page-blobs
@@ -289,7 +334,7 @@ class AzureCloudInterface(CloudInterface):
             with source_file:
                 shutil.copyfileobj(source_file, dest_file)
 
-    def remote_open(self, key):
+    def remote_open(self, key, decompressor=None):
         """
         Open a remote Azure Blob Storage object and return a readable stream
 
@@ -299,7 +344,10 @@ class AzureCloudInterface(CloudInterface):
         """
         try:
             obj = self.container_client.download_blob(key)
-            return StreamingBlobIO(obj)
+            if decompressor:
+                return DecompressingBlobIO(obj, decompressor)
+            else:
+                return StreamingBlobIO(obj)
         except ResourceNotFoundError:
             return None
 

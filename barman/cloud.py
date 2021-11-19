@@ -27,6 +27,7 @@ import operator
 import os
 import shutil
 import signal
+import snappy
 import tarfile
 from abc import ABCMeta, abstractmethod, abstractproperty
 from functools import partial
@@ -178,7 +179,12 @@ class CloudTarUploader(object):
             self.chunk_size = max(chunk_size, cloud_interface.MIN_CHUNK_SIZE)
         self.buffer = None
         self.counter = 0
-        tar_mode = "w|%s" % (compression or "")
+        self.do_snappy = False
+        if compression == "snappy":
+            self.compressor = snappy.StreamCompressor()
+            tar_mode = "w|"
+        else:
+            tar_mode = "w|%s" % (compression or "")
         self.tar = TarFileIgnoringTruncate.open(fileobj=self, mode=tar_mode)
         self.size = 0
         self.stats = None
@@ -188,7 +194,10 @@ class CloudTarUploader(object):
             self.flush()
         if not self.buffer:
             self.buffer = self._buffer()
-        self.buffer.write(buf)
+        if self.compressor:
+            self.buffer.write(self.compressor.add_chunk(buf))
+        else:
+            self.buffer.write(buf)
         self.size += len(buf)
 
     def flush(self):
@@ -275,6 +284,8 @@ class CloudUploadController(object):
             components.append(".gz")
         elif self.compression == "bz2":
             components.append(".bz2")
+        elif self.compression == "snappy":
+            components.append(".snappy")
         return "".join(components)
 
     def _get_tar(self, name):
@@ -874,8 +885,12 @@ class CloudInterface(with_metaclass(ABCMeta)):
         """
         extension = os.path.splitext(key)[-1]
         compression = "" if extension == ".tar" else extension[1:]
-        tar_mode = "r|%s" % compression
-        fileobj = self.remote_open(key)
+        if compression == "snappy":
+            tar_mode = "r|"
+            fileobj = self.remote_open(key, snappy.StreamDecompressor())
+        else:
+            tar_mode = "r|%s" % compression
+            fileobj = self.remote_open(key)
         with tarfile.open(fileobj=fileobj, mode=tar_mode) as tf:
             tf.extractall(path=dst)
 
@@ -1652,6 +1667,8 @@ class CloudBackupCatalog(KeepManagerMixinCloud):
                         info.compression = "gzip"
                     elif ext == "tar.bz2":
                         info.compression = "bzip2"
+                    elif ext == "tar.snappy":
+                        info.compression = "snappy"
                     else:
                         logging.warning("Skipping unknown extension: %s", ext)
                         continue
