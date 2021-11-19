@@ -15,6 +15,7 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with Barman.  If not, see <http://www.gnu.org/licenses/>
+from barman.cloud import CloudProviderOptionUnsupported, CloudProviderUnsupported
 
 
 def get_cloud_interface(config):
@@ -48,4 +49,29 @@ def get_cloud_interface(config):
 
         if "encryption_scope" in config:
             cloud_interface_kwargs["encryption_scope"] = config.encryption_scope
+
+        if "credential" in config and config.credential is not None:
+            try:
+                from azure.identity import AzureCliCredential, ManagedIdentityCredential
+            except ImportError:
+                raise SystemExit("Missing required python module: azure-identity")
+
+            supported_credentials = {
+                "azure-cli": AzureCliCredential,
+                "managed-identity": ManagedIdentityCredential,
+            }
+            try:
+                cloud_interface_kwargs["credential"] = supported_credentials[
+                    config.credential
+                ]()
+            except KeyError:
+                raise CloudProviderOptionUnsupported(
+                    "Unsupported credential: %s" % config.credential
+                )
+
         return AzureCloudInterface(**cloud_interface_kwargs)
+
+    else:
+        raise CloudProviderUnsupported(
+            "Unsupported cloud provider: %s" % config.cloud_provider
+        )

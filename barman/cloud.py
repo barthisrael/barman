@@ -117,6 +117,19 @@ class CloudUploadingError(BarmanException):
     """
 
 
+class CloudProviderUnsupported(BarmanException):
+    """
+    Exception raised when an unsupported cloud provider is requested
+    """
+
+
+class CloudProviderOptionUnsupported(BarmanException):
+    """
+    Exception raised when a supported cloud provider is given an unsupported
+    option
+    """
+
+
 class TarFileIgnoringTruncate(tarfile.TarFile):
     """
     Custom TarFile class that ignore truncated or vanished files.
