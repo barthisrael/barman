@@ -180,6 +180,7 @@ class CloudTarUploader(object):
         self.buffer = None
         self.counter = 0
         self.do_snappy = False
+        self.compressor = None
         if compression == "snappy":
             self.compressor = snappy.StreamCompressor()
             tar_mode = "w|"
