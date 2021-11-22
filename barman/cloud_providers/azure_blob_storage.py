@@ -25,7 +25,7 @@ from io import BytesIO, RawIOBase
 
 import snappy
 
-from barman.cloud import CloudInterface, CloudProviderError
+from barman.cloud import CloudInterface, CloudProviderError, DecompressingStreamingIO
 
 try:
     # Python 3.x
@@ -92,22 +92,9 @@ class StreamingBlobIO(RawIOBase):
         return blob_bytes
 
 
-class DecompressingBlobIO(StreamingBlobIO):
-    def __init__(self, blob, decompressor):
-        super(DecompressingBlobIO, self).__init__(blob)
-        self.decompressor = decompressor
-        self.buffer = bytearray()
-        self.compressed_chunk_size = 1024
-
-    def _read_from_uncompressed_buffer(self, n):
-        if n <= len(self.buffer):
-            return_bytes = self.buffer[:n]
-            self.buffer = self.buffer[n:]
-            return return_bytes
-        else:
-            return_bytes = self.buffer
-            self.buffer = []
-            return return_bytes
+class DecompressingBlobIO(DecompressingStreamingIO, StreamingBlobIO):
+    def __init__(self, body, decompressor):
+        super(DecompressingBlobIO, self).__init__(body, decompressor)
 
     def _read_compressed_chunk(self, n):
         compressed_bytes = self._current_chunk.read(n)
@@ -118,23 +105,6 @@ class DecompressingBlobIO(StreamingBlobIO):
         except StopIteration:
             pass
         return compressed_bytes
-
-    def read(self, n=1):
-        n = None if n < 0 else n
-        uncompressed_bytes = self._read_from_uncompressed_buffer(n)
-        if len(uncompressed_bytes) == n:
-            return uncompressed_bytes
-
-        while len(uncompressed_bytes) < n:
-            compressed_bytes = self._read_compressed_chunk(self.compressed_chunk_size)
-            uncompressed_bytes += self.decompressor.decompress(compressed_bytes)
-            if len(compressed_bytes) < self.compressed_chunk_size:
-                # If we got fewer bytes than we asked for then we're done
-                break
-
-        return_bytes = uncompressed_bytes[:n]
-        self.buffer = uncompressed_bytes[n:]
-        return return_bytes
 
 
 class AzureCloudInterface(CloudInterface):

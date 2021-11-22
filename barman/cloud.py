@@ -485,6 +485,54 @@ class FileUploadStatistics(dict):
         part["start_time"] = start_time
 
 
+class DecompressingStreamingIO(with_metaclass(ABCMeta)):
+    """
+    Mixin which adds decompression to a StreamingIO object.
+
+    This is intended to be included with the StreamingIO object used to wrap a
+    streaming response from a cloud provider.
+
+    Implementing classes must add their own _read_compressed_chunk method which
+    must return n compressed bytes from the streaming response.
+    """
+    def __init__(self, streaming_response, decompressor):
+        super(DecompressingStreamingIO, self).__init__(streaming_response)
+        self.decompressor = decompressor
+        self.buffer = bytearray()
+        self.compressed_chunk_size = 1024
+
+    def _read_from_uncompressed_buffer(self, n):
+        if n <= len(self.buffer):
+            return_bytes = self.buffer[:n]
+            self.buffer = self.buffer[n:]
+            return return_bytes
+        else:
+            return_bytes = self.buffer
+            self.buffer = []
+            return return_bytes
+
+    @abstractmethod
+    def _read_compressed_chunk(self, n):
+        """Read n bytes from the cloud provider response."""
+
+    def read(self, n=-1):
+        n = None if n < 0 else n
+        uncompressed_bytes = self._read_from_uncompressed_buffer(n)
+        if len(uncompressed_bytes) == n:
+            return uncompressed_bytes
+
+        while len(uncompressed_bytes) < n:
+            compressed_bytes = self._read_compressed_chunk(self.compressed_chunk_size)
+            uncompressed_bytes += self.decompressor.decompress(compressed_bytes)
+            if len(compressed_bytes) < self.compressed_chunk_size:
+                # If we got fewer bytes than we asked for then we're done
+                break
+
+        return_bytes = uncompressed_bytes[:n]
+        self.buffer = uncompressed_bytes[n:]
+        return return_bytes
+
+
 class CloudInterface(with_metaclass(ABCMeta)):
     """
     Abstract base class which provides the interface between barman and cloud

@@ -22,7 +22,7 @@ import logging
 import shutil
 from io import RawIOBase
 
-from barman.cloud import CloudInterface, CloudProviderError
+from barman.cloud import CloudInterface, CloudProviderError, DecompressingStreamingIO
 import snappy
 
 
@@ -56,46 +56,16 @@ class StreamingBodyIO(RawIOBase):
         return self.body.read(n)
 
 
-class DecompressingBodyIO(StreamingBodyIO):
+class DecompressingBodyIO(DecompressingStreamingIO, StreamingBodyIO):
     """
-    Wrap a boto StreamingBody in the IOBase API.
+    A StreamingBodyIO specialisation which decompresses on the fly.
     """
 
     def __init__(self, body, decompressor):
-        super(DecompressingBodyIO, self).__init__(body)
-        self.decompressor = decompressor
-        self.buffer = bytearray()
-        self.compressed_chunk_size = 1024
-
-    def _read_from_uncompressed_buffer(self, n):
-        if n <= len(self.buffer):
-            return_bytes = self.buffer[:n]
-            self.buffer = self.buffer[n:]
-            return return_bytes
-        else:
-            return_bytes = self.buffer
-            self.buffer = []
-            return return_bytes
+        super(DecompressingBodyIO, self).__init__(body, decompressor)
 
     def _read_compressed_chunk(self, n):
         return self.body.read(n)
-
-    def read(self, n=-1):
-        n = None if n < 0 else n
-        uncompressed_bytes = self._read_from_uncompressed_buffer(n)
-        if len(uncompressed_bytes) == n:
-            return uncompressed_bytes
-
-        while len(uncompressed_bytes) < n:
-            compressed_bytes = self._read_compressed_chunk(n)
-            uncompressed_bytes += self.decompressor.decompress(compressed_bytes)
-            if len(compressed_bytes) < self.compressed_chunk_size:
-                # If we got fewer bytes than we asked for then we're done
-                break
-
-        return_bytes = uncompressed_bytes[:n]
-        self.buffer = uncompressed_bytes[n:]
-        return return_bytes
 
 
 class S3CloudInterface(CloudInterface):
