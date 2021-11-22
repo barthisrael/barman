@@ -56,6 +56,48 @@ class StreamingBodyIO(RawIOBase):
         return self.body.read(n)
 
 
+class DecompressingBodyIO(StreamingBodyIO):
+    """
+    Wrap a boto StreamingBody in the IOBase API.
+    """
+
+    def __init__(self, body, decompressor):
+        super(DecompressingBodyIO, self).__init__(body)
+        self.decompressor = decompressor
+        self.buffer = bytearray()
+        self.compressed_chunk_size = 1024
+
+    def _read_from_uncompressed_buffer(self, n):
+        if n <= len(self.buffer):
+            return_bytes = self.buffer[:n]
+            self.buffer = self.buffer[n:]
+            return return_bytes
+        else:
+            return_bytes = self.buffer
+            self.buffer = []
+            return return_bytes
+
+    def _read_compressed_chunk(self, n):
+        return self.body.read(n)
+
+    def read(self, n=-1):
+        n = None if n < 0 else n
+        uncompressed_bytes = self._read_from_uncompressed_buffer(n)
+        if len(uncompressed_bytes) == n:
+            return uncompressed_bytes
+
+        while len(uncompressed_bytes) < n:
+            compressed_bytes = self._read_compressed_chunk(n)
+            uncompressed_bytes += self.decompressor.decompress(compressed_bytes)
+            if len(compressed_bytes) < self.compressed_chunk_size:
+                # If we got fewer bytes than we asked for then we're done
+                break
+
+        return_bytes = uncompressed_bytes[:n]
+        self.buffer = uncompressed_bytes[n:]
+        return return_bytes
+
+
 class S3CloudInterface(CloudInterface):
     # S3 multipart upload limitations
     # http://docs.aws.amazon.com/AmazonS3/latest/API/mpUploadUploadPart.html
@@ -257,7 +299,7 @@ class S3CloudInterface(CloudInterface):
             with source_file:
                 shutil.copyfileobj(source_file, dest_file)
 
-    def remote_open(self, key):
+    def remote_open(self, key, decompressor=None):
         """
         Open a remote S3 object and returns a readable stream
 
@@ -267,7 +309,10 @@ class S3CloudInterface(CloudInterface):
         """
         try:
             obj = self.s3.Object(self.bucket_name, key)
-            return StreamingBodyIO(obj.get()["Body"])
+            if decompressor:
+                return DecompressingBodyIO(obj.get()["Body"], decompressor)
+            else:
+                return StreamingBodyIO(obj.get()["Body"])
         except ClientError as exc:
             error_code = exc.response["Error"]["Code"]
             if error_code == "NoSuchKey":
