@@ -495,6 +495,7 @@ class DecompressingStreamingIO(with_metaclass(ABCMeta)):
     Implementing classes must add their own _read_compressed_chunk method which
     must return n compressed bytes from the streaming response.
     """
+
     def __init__(self, streaming_response, decompressor):
         super(DecompressingStreamingIO, self).__init__(streaming_response)
         self.decompressor = decompressor
